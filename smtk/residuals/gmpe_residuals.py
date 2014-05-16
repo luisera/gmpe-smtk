@@ -10,7 +10,7 @@ Module to get GMPE residuals - total, inter and intra
 """
 import h5py
 import numpy as np
-from math import sqrt
+from math import sqrt, ceil
 from scipy.special import erf
 from scipy.stats import scoreatpercentile, norm
 from copy import deepcopy
@@ -395,13 +395,13 @@ class LLH(Residuals):
                                0., 
                                1.0))
                 log_residuals[gmpe] = np.hstack([log_residuals[gmpe], asll])
-            llh[gmpe] = (1. / float(len(log_residuals[gmpe]))) *\
+            llh[gmpe] = -(1. / float(len(log_residuals[gmpe]))) *\
                 np.sum(log_residuals[gmpe])
         # Get weights
-        weights = np.array([2.0 ** llh[gmpe] for gmpe in self.gmpe_list])
+        weights = np.array([2.0 ** -llh[gmpe] for gmpe in self.gmpe_list])
         weights = weights / np.sum(weights)
         model_weights = OrderedDict([
-            (gmpe, weights[iloc]) for iloc, gmpe in enumerates(self.gmpe_list)]
+            (gmpe, weights[iloc]) for iloc, gmpe in enumerate(self.gmpe_list)]
             )
         return llh, model_weights
 
@@ -422,16 +422,16 @@ class EDR(Residuals):
             "Multiplier of standard deviation (equation 8 of Kale and Akkar)
         """
         edr_values = OrderedDict([(gmpe, {}) for gmpe in self.gmpe_list])
-        for gmpe in gmpe_list:
+        for gmpe in self.gmpe_list:
             obs, expected, stddev = self._get_gmpe_information(gmpe)
             results = self._get_edr(obs,
                                     expected,
                                     stddev,
                                     bandwidth,
                                     multiplier)
-            edr_values["MDE Norm"] = results[0]
-            edr_values["sqrt Kappa"] = results[1]
-            edr_values["EDR"] = results[2]
+            edr_values[gmpe]["MDE Norm"] = results[0]
+            edr_values[gmpe]["sqrt Kappa"] = results[1]
+            edr_values[gmpe]["EDR"] = results[2]
         return edr_values
 
     def _get_gmpe_information(self, gmpe):
@@ -466,14 +466,14 @@ class EDR(Residuals):
         num_d = len(np.arange(min_d, dc_max, bandwidth))
         mde = np.zeros(nvals)
         for iloc in range(0, num_d):
-            d_val = (dmin + (iloc * dd)) * np.ones(nvals)
-            d_1 = (dmin + (iloc * dd)) * np.ones(nvals)
-            d_2 = (dmin + (iloc * dd)) * np.ones(nvals)
-            p_1 = norm.cdf((d1 - mu_d) / stddev) -\
-                norm.cdf((-d1 - mu_d) / stddev)
-            p_2 = norm.cdf((d2 - mu_d) / stddev) -\
-                norm.cdf((-d2 - mu_d) / stddev)
-            mde += (p_2 - p_1) * dval
+            d_val = (min_d + (float(iloc) * bandwidth)) * np.ones(nvals)
+            d_1 = d_val - min_d
+            d_2 = d_val + min_d
+            p_1 = norm.cdf((d_1 - mu_d) / stddev) -\
+                norm.cdf((-d_1 - mu_d) / stddev)
+            p_2 = norm.cdf((d_2 - mu_d) / stddev) -\
+                norm.cdf((-d_2 - mu_d) / stddev)
+            mde += (p_2 - p_1) * d_val
         inv_n = 1.0 / float(nvals)
         mde_norm = np.sqrt(inv_n * np.sum(mde ** 2.))
         edr = np.sqrt(kappa * inv_n * np.sum(mde ** 2.))
