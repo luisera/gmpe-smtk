@@ -23,6 +23,7 @@ from sets import Set
 import matplotlib.pyplot as plt
 from openquake.hazardlib import gsim, imt
 from openquake.hazardlib.scalerel.wc1994 import WC1994
+from smtk.sm_utils import _save_image, _save_image_tight
 import smtk.trellis.trellis_utils as utils
 from smtk.trellis.configure import GSIMRupture
 
@@ -85,26 +86,6 @@ def _get_imts(imts):
         out_imts.append(imt.from_string(imtl))
     return out_imts
 
-
-
-def _save_image(filename, filetype='png', resolution=300):
-    """
-    If filename is specified, saves the image
-    :param str filename:
-        Name of the file
-    :param str filetype:
-        Type of file
-    :param int resolution:
-        DPI resolution of the output figure
-    """
-    if filename:
-        filename, filetype, resolution = build_filename(filename,
-                                                        filetype,
-                                                        resolution)
-        plt.savefig(filename, dpi=resolution, format=filetype)
-    else:
-        pass
-    return
 
 class BaseTrellis(object):
     """
@@ -354,12 +335,16 @@ class MagnitudeIMTTrellis(BaseTrellis):
                 gmvs)
             col_loc += 1
         # Add legend
-        plt.legend(self.lines,
-                   self.labels,
-                   loc=2,
-                   bbox_to_anchor=(1.05, 1.))
+        lgd = plt.legend(self.lines,
+                         self.labels,
+                         loc=2,
+                         bbox_to_anchor=(1.05, 1.))
+        #fig.savefig(self.filename, bbox_extra_artists=(lgd,),
+        #            bbox_inches="tight",
+        #            dpi=self.dpi, format=self.filetype)
+        _save_image_tight(fig, lgd, self.filename, self.filetype, self.dpi)
         plt.show()
-        _save_image(self.filename, self.filetype, self.dpi)
+
        
     def _build_plot(self, ax, i_m, gmvs):
         """
@@ -671,16 +656,17 @@ class MagnitudeDistanceSpectraTrellis(MagnitudeIMTTrellis):
                     gmvs,
                     rowloc,
                     colloc)
-        fig.text(0.5, 0.0, "Period", fontsize=18, ha='center', va='center')
-        fig.text(0.0, 0.5, "Sa (g)", fontsize=18, ha='center', va='center',
-                 rotation='vertical')
+        #fig.text(0.5, 0.0, "Period", fontsize=18, ha='center', va='center')
+        #fig.text(0.0, 0.5, "Sa (g)", fontsize=18, ha='center', va='center',
+        #         rotation='vertical')
         # Add legend
-        plt.legend(self.lines,
-                   self.labels,
-                   loc=2,
-                   bbox_to_anchor=(1.05, 1.))
+        lgd = plt.legend(self.lines,
+                         self.labels,
+                         loc=2,
+                         bbox_to_anchor=(1.05, 1.))
+        _save_image_tight(fig, lgd, self.filename, self.filetype, self.dpi)
         plt.show()
-        _save_image(self.filename, self.filetype, self.dpi)
+
 
 
     def _build_plot(self, ax, gmvs, rloc, cloc):
@@ -717,7 +703,7 @@ class MagnitudeDistanceSpectraTrellis(MagnitudeIMTTrellis):
                                     label=gmpe.__class__.__name__)
             # On the top row, add the distance as a title
             if rloc == 0:
-                ax.set_title("%s = %s (km)" %(
+                ax.set_title("%s = %9.3f (km)" %(
                     self.distance_type,
                     self.distances[self.distance_type][cloc]),
                     fontsize=12)
@@ -736,15 +722,14 @@ class MagnitudeDistanceSpectraTrellis(MagnitudeIMTTrellis):
             #else:
             ax.set_xlim(periods[0], periods[-1])
             ax.grid()
-
-            #self._set_labels(i_m, ax)
+            self._set_labels(i_m, ax)
 
 
     def _set_labels(self, i_m, ax):
             """
             Sets the labels on the specified axes
             """
-            ax.set_xlabel("Period (s)")
+            ax.set_xlabel("Period (s)", fontsize=12)
             ax.set_ylabel("Sa (g)", fontsize=12)
 
 
@@ -786,14 +771,14 @@ class MagnitudeDistanceSpectraSigmaTrellis(MagnitudeDistanceSpectraTrellis):
                                     label=gmpe.__class__.__name__)
             # On the top row, add the distance as a title
             if rloc == 0:
-                ax.set_title("%s = %s (km)" %(
+                ax.set_title("%s = %9.3f (km)" %(
                     self.distance_type,
                     self.distances[self.distance_type][cloc]),
                     fontsize=12)
             # On the last column add a vertical label with magnitude
             if cloc == (self.nsites - 1):
                 ax.annotate("M = %s" % self.rctx[rloc].mag,
-                            (1.05, 0.5),
+                            (1.02, 0.5),
                             xycoords="axes fraction",
                             fontsize=12,
                             rotation="vertical")
@@ -837,5 +822,5 @@ class MagnitudeDistanceSpectraSigmaTrellis(MagnitudeDistanceSpectraTrellis):
         """
         Sets the labels on the specified axes
         """
-        ax.set_xlabel("Period (s)")
+        ax.set_xlabel("Period (s)", fontsize=12)
         ax.set_ylabel("%s Std. Dev." % self.stddevs, fontsize=12)

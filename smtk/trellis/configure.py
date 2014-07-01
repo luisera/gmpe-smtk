@@ -36,6 +36,7 @@ from openquake.hazardlib.source.point import PointSource
 from openquake.hazardlib.gsim.base import (SitesContext,
                                            RuptureContext,
                                            DistancesContext)
+from smtk.sm_utils import _save_image
 
 
 MESH_SPACING = 1.0
@@ -611,7 +612,7 @@ class GSIMRupture(object):
                              'openquake.hazardlib.site.SiteCollection')
 
     def plot_distance_comparisons(self, distance1, distance2, logaxis=False,
-        figure_size=(7, 5)):
+        figure_size=(7, 5), filename=None, filetype="png", dpi=300):
         """
         Creates a plot comparing different distance metrics for the 
         specific rupture and target site combination
@@ -629,6 +630,8 @@ class GSIMRupture(object):
         plt.ylabel("%s (km)" % distance2, size='medium')
         plt.title('Rupture: M=%6.1f, Dip=%3.0f, Ztor=%4.1f, Aspect=%5.2f'
                    % (self.magnitude, self.dip, self.ztor, self.aspect))
+        _save_image(filename, filetype, dpi)
+        plt.show()
 
     def _calculate_distance(self, distance_type):
         """
@@ -651,7 +654,8 @@ class GSIMRupture(object):
             raise ValueError('Unsupported Distance Measure: %s' 
                              % distance_type)
 
-    def plot_model_configuration(self, figure_size=(7, 5)):
+    def plot_model_configuration(self, marker_style="o", figure_size=(7, 5), 
+            filename=None, filetype="png", dpi=300):
         """
         Produces a 3D plot of the current model configuration
         """
@@ -668,9 +672,11 @@ class GSIMRupture(object):
         ax.scatter(self.target_sites.mesh.lons,
                    self.target_sites.mesh.lats,
                    np.ones_like(self.target_sites.mesh.lons),
-                   c='r')
+                   c='r',
+                   marker=marker_style)
         ax.set_xlabel('Longitude')
         ax.set_ylabel('Latitude')
         ax.set_zlabel('Depth (km)')
+        _save_image(filename, filetype, dpi)
         plt.show()
         

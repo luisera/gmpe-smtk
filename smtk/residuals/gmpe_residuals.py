@@ -8,6 +8,7 @@ Module to get GMPE residuals - total, inter and intra
 
 
 """
+import sys
 import h5py
 import numpy as np
 from math import sqrt, ceil
@@ -197,27 +198,34 @@ class Residuals(object):
         self.number_gmpes = len(self.gmpe_list)
         self.types = OrderedDict([(gmpe, {}) for gmpe in self.gmpe_list])
         self.residuals = []
+        self.modelled = []
         self.imts = imts
         for gmpe in gmpe_list:
             if not gmpe in GSIM_LIST:
                 raise ValueError("%s not supported in OpenQuake" % gmpe) 
-            gmpe_dict = {}
+            gmpe_dict_1 = {}
+            gmpe_dict_2 = {}
             for imtx in self.imts:
-                gmpe_dict[imtx] = {}
+                gmpe_dict_1[imtx] = {}
+                gmpe_dict_2[imtx] = {}
                 self.types[gmpe][imtx] = []
                 for res_type in \
                     GSIM_LIST[gmpe].DEFINED_FOR_STANDARD_DEVIATION_TYPES:
-                    gmpe_dict[imtx][res_type] = []
+                    gmpe_dict_1[imtx][res_type] = []
+                    gmpe_dict_2[imtx][res_type] = []
                     self.types[gmpe][imtx].append(res_type)
-            self.residuals.append([gmpe, gmpe_dict])
+                gmpe_dict_2[imtx]["Mean"] = []
+            self.residuals.append([gmpe, gmpe_dict_1])
+            self.modelled.append([gmpe, gmpe_dict_2])
         self.residuals = OrderedDict(self.residuals)
+        self.modelled = OrderedDict(self.modelled)
         self.database = None
         self.number_records = None
         self.contexts = None
     
 
     def get_residuals(self, database, nodal_plane_index=1,
-            component="Geometric"):
+            component="Geometric", normalise=True):
         """
         Calculate the residuals for a set of ground motion records
         """
@@ -231,12 +239,17 @@ class Residuals(object):
             context = self.get_observations(context, component)
             # Get the expected ground motions
             context = self.get_expected_motions(context)
-            context = self.calculate_residuals(context)
+            context = self.calculate_residuals(context, normalise)
             for gmpe in self.residuals.keys():
                 for imtx in self.residuals[gmpe].keys():
                     for res_type in self.residuals[gmpe][imtx].keys():
                         self.residuals[gmpe][imtx][res_type].extend(
                             context["Residual"][gmpe][imtx][res_type].tolist())
+                        self.modelled[gmpe][imtx][res_type].extend(
+                            context["Expected"][gmpe][imtx][res_type].tolist())
+                    self.modelled[gmpe][imtx]["Mean"].extend(
+                        context["Expected"][gmpe][imtx]["Mean"].tolist())
+
             self.contexts.append(context)
        
         for gmpe in self.residuals.keys():
@@ -244,6 +257,10 @@ class Residuals(object):
                 for res_type in self.residuals[gmpe][imtx].keys():
                     self.residuals[gmpe][imtx][res_type] = np.array(
                         self.residuals[gmpe][imtx][res_type])
+                    self.modelled[gmpe][imtx][res_type] = np.array(
+                        self.modelled[gmpe][imtx][res_type])
+                self.modelled[gmpe][imtx]["Mean"] = np.array(
+                    self.modelled[gmpe][imtx]["Mean"])
 
     def get_observations(self, context, component="Geometric"):
         """
@@ -303,7 +320,7 @@ class Residuals(object):
         context["Expected"] = expected
         return context
                     
-    def calculate_residuals(self, context):
+    def calculate_residuals(self, context, normalise=True):
         """
         Calculate the residual terms
         """
@@ -322,13 +339,15 @@ class Residuals(object):
                         obs,
                         mean,
                         context["Expected"][gmpe][imtx]["Inter event"],
-                        context["Expected"][gmpe][imtx]["Intra event"])
+                        context["Expected"][gmpe][imtx]["Intra event"],
+                        normalise)
                     residual[gmpe][imtx]["Inter event"] = inter
                     residual[gmpe][imtx]["Intra event"] = intra
         context["Residual"] = residual
         return context
 
-    def _get_random_effects_residuals(self, obs, mean, inter, intra):
+    def _get_random_effects_residuals(self, obs, mean, inter, intra,
+            normalise=True):
         """
         Calculates the random effects residuals using the inter-event
         residual formula described in Abrahamson & Youngs (1992) Eq. 10
@@ -337,7 +356,10 @@ class Residuals(object):
         inter_res = ((inter ** 2.) * sum(obs - mean)) /\
                      (nvals * (inter ** 2.) + (intra ** 2.))
         intra_res = obs - (mean + inter_res)
-        return inter_res / inter, intra_res / intra
+        if normalise:
+            return inter_res / inter, intra_res / intra
+        else:
+            return inter_res, intra_res
 
     def get_residual_statistics(self):
         """
@@ -373,7 +395,7 @@ class Likelihood(Residuals):
                 lh_values[gmpe][imtx] = {}
                 for res_type in self.types[gmpe][imtx]:
                     zvals = np.fabs(self.residuals[gmpe][imtx][res_type])
-                    l_h = erf(zvals / sqrt(2.))
+                    l_h = 1.0 - erf(zvals / sqrt(2.))
                     lh_values[gmpe][imtx][res_type] = l_h
                     statistics[gmpe][imtx][res_type]["Median LH"] =\
                         scoreatpercentile(l_h, 50.0)
@@ -494,6 +516,166 @@ class EDR(Residuals):
         de_corr = np.sum((obs - y_c) ** 2.)
         return de_orig / de_corr
         
-        
+      
+class SingleStationAnalysis(object):
+    """
+    Class to analyse residual sets recorded at specific stations
+    """
+    def __init__(self, site_id_list, gmpe_list, imts):
+        """
+
+        """
+        self.site_ids = site_id_list
+        self.gmpe_list = gmpe_list
+        self.imts = imts
+        self.site_residuals = []
+        self.types = OrderedDict([(gmpe, {}) for gmpe in self.gmpe_list])
+        for gmpe in gmpe_list:
+            if not gmpe in GSIM_LIST:
+                raise ValueError("%s not supported in OpenQuake" % gmpe) 
+            for imtx in self.imts:
+                self.types[gmpe][imtx] = []
+                for res_type in \
+                    GSIM_LIST[gmpe].DEFINED_FOR_STANDARD_DEVIATION_TYPES:
+                    self.types[gmpe][imtx].append(res_type)
+
+    def get_site_residuals(self, database):
+        """
+        Calculates the total, inter-event and within-event residuals for
+        each site
+        """
+        imt_dict = dict([(imtx, {}) for imtx in self.imts])
+        for site_id in self.site_ids:
+            print site_id
+            selector = SMRecordSelector(database)
+            site_db = selector.select_from_site_id(site_id, as_db=True)
+            resid = Residuals(self.gmpe_list, self.imts)
+            resid.get_residuals(site_db, normalise=False)
+            setattr(
+                resid,
+                "site_analysis",
+                OrderedDict([(gmpe, imt_dict) for gmpe in self.gmpe_list]))
+            setattr(
+                resid,
+                "site_expected",
+                OrderedDict([(gmpe, imt_dict) for gmpe in self.gmpe_list]))
+            self.site_residuals.append(resid)
+
+    def residual_statistics(self, pretty_print=False, filename=None):
+        """
+        Get single-station residual statistics for each site
+        """
+        output_resid = []
+        for t_resid in self.site_residuals:
+            resid = deepcopy(t_resid)
+            for gmpe in self.gmpe_list:
+                for imtx in self.imts:
+                    n_events = len(resid.residuals[gmpe][imtx]["Total"])
+                    resid.site_analysis[gmpe][imtx]["events"] = n_events
+                    resid.site_analysis[gmpe][imtx]["Intra event"] =\
+                        resid.residuals[gmpe][imtx]["Intra event"]
+                    resid.site_analysis[gmpe][imtx]["Inter event"] =\
+                        resid.residuals[gmpe][imtx]["Inter event"]
+                    resid.site_analysis[gmpe][imtx]["Total"] =\
+                        resid.residuals[gmpe][imtx]["Total"]
+                    delta_s2ss = self._get_delta_s2ss(
+                        resid.residuals[gmpe][imtx]["Intra event"],
+                        n_events)
+                    delta_woes = \
+                        resid.site_analysis[gmpe][imtx]["Intra event"] - \
+                        delta_s2ss
+                    resid.site_analysis[gmpe][imtx]["dS2ss"] = delta_s2ss
+                    resid.site_analysis[gmpe][imtx]["dWo,es"] = delta_woes
+
+                    resid.site_analysis[gmpe][imtx]["phi_ss,s"] = \
+                        self._get_single_station_phi(
+                            resid.residuals[gmpe][imtx]["Intra event"],
+                            delta_s2ss,
+                            n_events)
+                    # Get expected values too
+                    resid.site_analysis[gmpe][imtx]["Expected Total"] =\
+                        resid.modelled[gmpe][imtx]["Total"]
+                    resid.site_analysis[gmpe][imtx]["Expected Inter"] =\
+                        resid.modelled[gmpe][imtx]["Inter event"]
+                    resid.site_analysis[gmpe][imtx]["Expected Intra"] =\
+                        resid.modelled[gmpe][imtx]["Intra event"]
+            output_resid.append(resid)
+        self.site_residuals = output_resid
+        return self.get_total_phi_ss(pretty_print, filename) 
+
+    def _get_delta_s2ss(self, intra_event, n_events):
+        """
+        Returns the average within-event residual for the site from
+        Rodriguez-Marek et al. (2011) Equation 8
+        """
+        return (1. / float(n_events)) * np.sum(intra_event)
 
 
+    def _get_single_station_phi(self, intra_event, delta_s2ss, n_events):
+        """
+        Returns the single-station phi for the specific station
+        Rodriguez-Marek et al. (2011) Equation 11
+        """
+        phiss = np.sum((intra_event - delta_s2ss) ** 2.) / float(n_events - 1)
+        return np.sqrt(phiss)
+
+    def get_total_phi_ss(self, pretty_print=None, filename=None):
+        """
+        Returns the station averaged single-station phi
+        Rodriguez-Marek et al. (2011) Equation 10
+        """
+        if pretty_print:
+            if filename:
+                fid = open(filename, "w")
+            else:
+                fid = sys.stdout
+        imt_dict_1 = dict([(imtx, None) for imtx in self.imts])
+        imt_dict_2 = dict([(imtx, None) for imtx in self.imts])
+        phi_ss = OrderedDict([(gmpe, imt_dict_1) for gmpe in self.gmpe_list])
+        phi_s2ss = OrderedDict([(gmpe, imt_dict_2) for gmp in self.gmpe_list])
+        n_sites = float(len(self.site_residuals))
+        for gmpe in self.gmpe_list:
+            if pretty_print:
+                print >> fid, "%s" % gmpe 
+                
+            for imtx in self.imts:
+                if pretty_print:
+                    print >> fid, "%s" % imtx
+                n_events = []
+                numerator_sum = 0.0
+                d2ss = []
+                for iloc, resid in enumerate(self.site_residuals):
+                    d2ss.append(resid.site_analysis[gmpe][imtx]["dS2ss"])
+                    n_events.append(resid.site_analysis[gmpe][imtx]["events"])
+                    numerator_sum += np.sum((
+                        resid.site_analysis[gmpe][imtx]["Intra event"] -
+                        resid.site_analysis[gmpe][imtx]["dS2ss"]) ** 2.)
+                    if pretty_print:
+                        print >> fid, "Site ID, %s, dS2Ss, %12.8f, "\
+                            "phiss_s, %12.8f, Num Records, %s" % (
+                            self.site_ids[iloc],
+                            resid.site_analysis[gmpe][imtx]["dS2ss"],
+                            resid.site_analysis[gmpe][imtx]["phi_ss,s"],
+                            resid.site_analysis[gmpe][imtx]["events"])
+                d2ss = np.array(d2ss)
+                phi_s2ss[gmpe][imtx] = {"Mean": np.mean(d2ss),
+                                        "StdDev": np.std(d2ss)}
+                phi_ss[gmpe][imtx] = np.sqrt(
+                    numerator_sum / 
+                    float(np.sum(np.array(n_events)) - 1))
+        if pretty_print:
+            print >> fid, "TOTAL RESULTS FOR GMPE"
+            for gmpe in self.gmpe_list:
+                print >> fid, "%s" % gmpe 
+                
+                for imtx in self.imts:
+                    print >> fid, "%s, phi_ss, %12.8f, phi_s2ss(Mean),"\
+                        " %12.8f, phi_s2ss(Std. Dev), %12.8f" % (imtx,
+                        phi_ss[gmpe][imtx], phi_s2ss[gmpe][imtx]["Mean"],
+                        phi_s2ss[gmpe][imtx]["StdDev"])
+            if filename:
+                fid.close()
+        return phi_ss, phi_s2ss
+   
+
+       

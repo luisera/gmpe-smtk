@@ -10,14 +10,17 @@ import numpy as np
 from datetime import datetime
 from openquake.hazardlib.gsim.base import (SitesContext, DistancesContext,
                                           RuptureContext)
+from openquake.hazardlib.site import Site, SiteCollection
+from openquake.hazardlib.geo.point import Point
+from smtk.trellis.configure import vs30_to_z1pt0_as08, z1pt0_to_z2pt5
 
 class Magnitude(object):
     """
-
+    Class to hold magnitude attributes
     """
     def __init__(self, value, mtype, sigma=None):
         """
-
+        
         """
         self.value = value
         self.mtype = mtype
@@ -25,7 +28,7 @@ class Magnitude(object):
 
 class Rupture(object):
     """
-
+    Class to hold rupture attributes
     """
     def __init__(self, eq_id, length, width, depth, area=None, surface=None):
         """
@@ -40,7 +43,7 @@ class Rupture(object):
 
     def get_area(self):
         """
-
+        Returns the area of the rupture
         """
         if self.area:
             return self.area
@@ -75,8 +78,6 @@ class GCMTPrincipalAxes(object):
         self.b_axis = None
         self.p_axis = None
 
-
-
 MECHANISM_TYPE = {"Normal": -90.0,
                   "Strike-Slip": 0.0,
                   "Reverse": 90.0,
@@ -84,7 +85,7 @@ MECHANISM_TYPE = {"Normal": -90.0,
 
 class FocalMechanism(object):
     """
-
+    Class to hold the full focal mechanism attribute set
     """
     def __init__(self, eq_id, name, nodal_planes, eigenvalues,
         moment_tensor=None, mechanism_type=None):
@@ -100,7 +101,8 @@ class FocalMechanism(object):
 
     def get_rake_from_mechanism_type(self):
         """
-
+        Returns an idealised "rake" based on a qualitative description of the
+        style of faulting
         """
         if self.mechanism_type in MECHANISM_TYPE.keys():
             return MECHANISM_TYPE[self.mechanism_type]
@@ -147,7 +149,7 @@ class RecordDistance(object):
 
 class RecordSite(object):
     """
-
+    Class to hold attributes belonging to the site
     """
     def __init__(self, site_id, site_code, site_name, longitude, latitude,
         altitude, vs30=None, vs30_measured=None, network_code=None,
@@ -177,10 +179,39 @@ class RecordSite(object):
         self.z1pt0 = None
         self.z2pt5 = None
 
+    def to_openquake_site(self, missing_vs30=None):
+        """
+        Returns the site as an instance of the :class:
+        openquake.hazardlib.site.Site
+        """
+        if self.vs30:
+            vs30 = self.vs30
+            vs30_measured = self.vs30_measured
+        else:
+            vs30 = missing_vs30
+            vs30_measured = False
+        
+        if self.z1pt0:
+            z1pt0 = self.z1pt0
+        else:
+            z1pt0 = vs30_to_z1pt0_as08(vs30)
+
+        if self.z2pt5:
+            z2pt5 = self.z2pt5
+        else:
+            z2pt5 = z1pt0_to_z2pt5(z1pt0)
+
+        return Site(Point(self.longitude, self.latitude),
+                    vs30,
+                    vs30_measured,
+                    z1pt0,
+                    z2pt5,
+                    self.id)
+
 
     def get_ec8_class(self):
         """
-
+        Returns the EC8 class associated with a site given a Vs30
         """
 
         if not self.vs30:
@@ -217,9 +248,10 @@ ims_dict = {'PGA': None,
 
 class Component(object):
     """
+    Contains the metadata relating to waveform of the record
     """
     def __init__(self, waveform_id, orientation, ims=None, longest_period=None,
-        waveform_filter=None, baseline=None):
+        waveform_filter=None, baseline=None, units=None):
         """
 
         """
@@ -229,11 +261,12 @@ class Component(object):
         self.filter = waveform_filter
         self.baseline = baseline
         self.ims = ims
+        self.units = None
 
 
 class GroundMotionRecord(object):
     """
-
+    Class containing the full representation of the strong motion record
     """
     def __init__(self, gm_id, time_series_file, event, distance, record_site,
         x_comp, y_comp, vertical=None, ims={}, longest_period=None,
@@ -276,7 +309,7 @@ class GroundMotionDatabase(object):
 
     def number_records(self):
         """
-
+        Returns number of records
         """
         return len(self.records)
 
@@ -332,6 +365,10 @@ class GroundMotionDatabase(object):
             if rup.site.z2pt5:
                 z1pt0.append(rup.site.z2pt5)
         setattr(sctx, 'vs30', np.array(vs30))
+        #if len(longs) > 0:
+        #    setattr(sctx, 'lons', np.array(longs))
+        #if len(lats) > 0:
+        #    setattr(sctx, 'lats', np.array(lats))
         if len(vs30_measured) > 0:
             setattr(sctx, 'vs30measured', np.array(vs30))
         if len(z1pt0) > 0:
@@ -402,3 +439,11 @@ class GroundMotionDatabase(object):
             setattr(rctx, 'width', rup.event.rupture.width)
         setattr(rctx, 'hypo_depth', rup.event.depth)
         return rctx
+
+    def get_site_collection(self, missing_vs30=None):
+        """
+        Returns the sites in the database as an instance of the :class:
+        openquake.hazardlib.site.SiteCollection
+        """
+        return SiteCollection([rec.site.to_openquake_site(missing_vs30)
+                               for rec in self.records])

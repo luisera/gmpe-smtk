@@ -5,9 +5,32 @@ Strong motion record selection tools
 """
 import numpy as np
 from copy import deepcopy
+from collections import OrderedDict
 from openquake.hazardlib.geo.point import Point
 from openquake.hazardlib.geo.polygon import Polygon
 from smtk.sm_database import GroundMotionRecord, GroundMotionDatabase
+
+def rank_sites_by_record_count(database, threshold=0):
+    """
+    Function to determine count the number of records per site and return
+    the list ranked in descending order
+    """
+    name_id_list = [(rec.site.id, rec.site.name) for rec in database.records]
+    name_id = dict([])
+    for name_id_pair in name_id_list:
+        if name_id_pair[0] in name_id.keys():
+            name_id[name_id_pair[0]]["Count"] += 1
+        else:
+            name_id[name_id_pair[0]] = {"Count": 1, "Name": name_id_pair[1]}
+    counts = np.array([name_id[key]["Count"] for key in name_id.keys()])
+    sort_id = np.flipud(np.argsort(counts))
+
+    key_vals = name_id.keys()
+    output_list = []
+    for idx in sort_id:
+        if name_id[key_vals[idx]]["Count"] >= threshold:
+            output_list.append((key_vals[idx], name_id[key_vals[idx]]))
+    return OrderedDict(output_list)
 
 
 class SMRecordSelector(object):
@@ -61,6 +84,16 @@ class SMRecordSelector(object):
             return self.database.records[self.record_ids.index(record_id)]
         else:
             raise ValueError("Record %s is not in database" % record_id)
+
+    def select_from_site_id(self, site_id, as_db=False):
+        """
+        Select records corresponding to a particular site ID
+        """
+        idx = []
+        for iloc, record in enumerate(self.database.records):
+            if record.site.id == site_id:
+                idx.append(iloc)
+        return self.select_records(idx, as_db)
 
     def select_from_event_id(self, event_id, as_db=False):
         """
