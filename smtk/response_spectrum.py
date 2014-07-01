@@ -9,22 +9,41 @@ import numpy as np
 from math import sqrt
 from scipy.integrate import cumtrapz
 import matplotlib.pyplot as plt
+from sm_utils import (_save_image,
+                      get_time_vector,
+                      convert_accel_units,
+                      get_velocity_displacement)
+                     
 
-def get_velocity_displacement(time_step, acceleration):
-    '''
-    Returns the velocity and displacment time series using simple integration
-    :param float time_step:
-        Time-series time-step (s)
-    :param numpy.ndarray acceleration:
-        Acceleration time-history
-    :returns:
-        velocity - Velocity Time series (cm/s)
-        displacement - Displacement Time series (cm)
-    '''
-    velocity = time_step * cumtrapz(acceleration, initial=0.)
-    displacement = time_step * cumtrapz(velocity, initial=0.)
-    return velocity, displacement
-    
+#def get_velocity_displacement(time_step, acceleration):
+#    '''
+#    Returns the velocity and displacment time series using simple integration
+#    :param float time_step:
+#        Time-series time-step (s)
+#    :param numpy.ndarray acceleration:
+#        Acceleration time-history
+#    :returns:
+#        velocity - Velocity Time series (cm/s)
+#        displacement - Displacement Time series (cm)
+#    '''
+#    velocity = time_step * cumtrapz(acceleration, initial=0.)
+#    displacement = time_step * cumtrapz(velocity, initial=0.)
+#    return velocity, displacement
+#
+#def convert_accel_units(acceleration, units):
+#    """
+#    Converts acceleration to different units
+#    """
+#    if units=="g":
+#        return 981. * acceleration
+#    elif units=="m/s":
+#        return 100. * acceleration
+#    elif units=="cm/s/s":
+#        return acceleration
+#    else:
+#        raise ValueError("Unrecognised time history units. "
+#                         "Should take either ''g'', ''m/s'' or ''cm/s/s''")
+
 
 class ResponseSpectrum(object):
     '''
@@ -44,18 +63,9 @@ class ResponseSpectrum(object):
             Units of the acceleration time history {"g", "m/s", "cm/s/s"}
 
         '''
-        #self.time = time_hist[:, 0]
         self.periods = periods
         self.num_per = len(periods)
-        if units=="g":
-            self.acceleration = 981. * acceleration
-        elif units=="m/s":
-            self.acceleration = 100 * acceleration
-        elif units=="cm/s/s":
-            self.acceleration = acceleration
-        else:
-            raise ValueError("Unrecognised time history units. "
-                             "Should take either ''g'', ''m/s'' or ''cm/s/s''")
+        self.acceleration = convert_accel_units(acceleration, units)
         self.damping = damping
         self.d_t = time_step
         self.velocity, self.displacement = get_velocity_displacement(
@@ -208,12 +218,6 @@ class NigamJennings(ResponseSpectrum):
         omega2 = omega ** 2.
         omega3 = omega ** 3.
         omega_d = omega * sqrt(1.0 - (self.damping ** 2.))
-
-        #tvec = np.zeros([3, self.num_per], dtype=float)
-        #z_d = np.zeros(self.num_per, dtype=float)
-        #z_v = np.zeros(self.num_per, dtype=float)
-        #z_a = np.zeros(self.num_per, dtype=float)
-
         const = {'f1': (2.0 * self.damping) / (omega3 * self.d_t),
                 'f2': 1.0 / omega2,
                 'f3': self.damping * omega,
@@ -294,13 +298,15 @@ PLOT_TYPE = {"loglog": lambda ax, x, y : ax.loglog(x, y),
              "linear": lambda ax, x, y : ax.plot(x, y)}
 
 
-def plot_response_spectra(spectra, axis_type="loglog"):
+def plot_response_spectra(spectra, axis_type="loglog", figure_size=(8, 6),
+        filename=None, filetype="png", dpi=300):
     """
     Creates a plot of the suite of response spectra (Acceleration,
     Velocity, Displacement, Pseudo-Acceleration, Pseudo-Velocity) derived
     from a particular ground motion record
     """
-    plt.figure(figsize=(8, 6))
+    fig = plt.figure(figsize=figure_size)
+    fig.set_tight_layout(True)
     ax = plt.subplot(2, 2, 1)
     # Acceleration
     PLOT_TYPE[axis_type](ax, spectra["Period"], spectra["Acceleration"])
@@ -326,8 +332,53 @@ def plot_response_spectra(spectra, axis_type="loglog"):
     ax.set_ylabel("Displacement (cm)", fontsize=12)
     ax.set_xlim(np.min(spectra["Period"]), np.max(spectra["Period"]))
     ax.grid()
+    _save_image(filename, filetype, dpi)
     plt.show()
-    #plt.tight_layout()
-    
-
-
+   
+def plot_time_series(acceleration, time_step, velocity=[], displacement=[],
+        units="cm/s/s", figure_size=(8, 6), filename=None, filetype="png",
+        dpi=300, linewidth=1.5):
+    """
+    Creates a plot of acceleration, velocity and displacement for a specific
+    ground motion record
+    """
+    acceleration = convert_accel_units(acceleration, units)
+    accel_time = get_time_vector(time_step, len(acceleration))
+    if len(velocity) > 0:
+        velocity, dspl = get_velocity_displacement(time_step, acceleration)
+    vel_time = get_time_vector(time_step, len(velocity))
+    if len(displacement) > 0:
+        displacement = dspl
+    disp_time = get_time_vector(time_step, len(displacement))
+    fig = plt.figure(figsize=figure_size)
+    fig.set_tight_layout(True)
+    ax = plt.subplot(3, 1, 1)
+    # Accleration
+    ax.plot(accel_time, acceleration, 'k-', linewidth=linewidth)
+    ax.set_xlabel("Time (s)", fontsize=12)
+    ax.set_ylabel("Acceleration (cm/s/s)", fontsize=12)
+    end_time = np.max(np.array([accel_time[-1], vel_time[-1], disp_time[-1]]))
+    pga = np.max(np.fabs(acceleration))
+    ax.set_xlim(0, end_time)
+    ax.set_ylim(-1.1 * pga, 1.1 * pga)
+    ax.grid()
+    # Velocity
+    ax = plt.subplot(3, 1, 2)
+    ax.plot(vel_time, velocity, 'b-', linewidth=linewidth)
+    ax.set_xlabel("Time (s)", fontsize=12)
+    ax.set_ylabel("Velocity (cm/s)", fontsize=12)
+    pgv = np.max(np.fabs(velocity))
+    ax.set_xlim(0, end_time)
+    ax.set_ylim(-1.1 * pgv, 1.1 * pgv)
+    ax.grid()
+    # Displacement
+    ax = plt.subplot(3, 1, 3)
+    ax.plot(disp_time, displacement, 'r-', linewidth=linewidth)
+    ax.set_xlabel("Time (s)", fontsize=12)
+    ax.set_ylabel("Displacement (cm)", fontsize=12)
+    pgd = np.max(np.fabs(displacement))
+    ax.set_xlim(0, end_time)
+    ax.set_ylim(-1.1 * pgd, 1.1 * pgd)
+    ax.grid()
+    _save_image(filename, filetype, dpi)
+    plt.show()
